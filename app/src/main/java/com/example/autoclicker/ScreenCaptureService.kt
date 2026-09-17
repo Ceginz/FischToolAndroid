@@ -18,6 +18,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -34,6 +35,7 @@ class ScreenCaptureService : Service() {
     private var imageReader: ImageReader? = null
     private lateinit var handlerThread: HandlerThread
     private lateinit var handler: Handler
+    private lateinit var mainHandler: Handler
 
     private var screenWidth = 0
     private var screenHeight = 0
@@ -52,6 +54,7 @@ class ScreenCaptureService : Service() {
         handlerThread = HandlerThread("CaptureThread")
         handlerThread.start()
         handler = Handler(handlerThread.looper)
+        mainHandler = Handler(Looper.getMainLooper())
         createNotificationChannel()
     }
 
@@ -80,6 +83,11 @@ class ScreenCaptureService : Service() {
         mediaProjection?.registerCallback(projectionCallback, handler)
 
         startCapture()
+
+        mainHandler.post {
+            OverlayManager.show(applicationContext) { stopSelf() }
+        }
+
         return START_STICKY
     }
 
@@ -98,7 +106,7 @@ class ScreenCaptureService : Service() {
             if (image == null) return@setOnImageAvailableListener
 
             val now = System.currentTimeMillis()
-            if (now - lastProcessTime < minIntervalMs) {
+            if (OverlayManager.isPaused || now - lastProcessTime < minIntervalMs) {
                 image.close()
                 return@setOnImageAvailableListener
             }
@@ -161,6 +169,7 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        mainHandler.post { OverlayManager.hide() }
         imageReader?.setOnImageAvailableListener(null, null)
         virtualDisplay?.release()
         mediaProjection?.unregisterCallback(projectionCallback)
