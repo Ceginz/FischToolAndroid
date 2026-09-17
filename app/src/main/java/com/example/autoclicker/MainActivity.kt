@@ -1,22 +1,33 @@
 package com.example.autoclicker
 
+import android.app.Activity
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
 import android.widget.Button
 import android.widget.TextView
-import android.app.Activity
 
 class MainActivity : Activity() {
-    
+
+    companion object {
+        private const val REQ_MEDIA_PROJECTION = 1001
+        private const val REQ_NOTIFICATIONS = 1002
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        val btn = findViewById<Button>(R.id.btnOpenAccessibility)
-        btn.setOnClickListener {
+        findViewById<Button>(R.id.btnOpenAccessibility).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        findViewById<Button>(R.id.btnStartDetection).setOnClickListener {
+            requestNotificationPermissionThenCapture()
         }
 
         refreshStatus()
@@ -25,6 +36,48 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refreshStatus()
+    }
+
+    private fun requestNotificationPermissionThenCapture() {
+        if (Build.VERSION.SDK_INT >= 33) {
+            val granted = checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), REQ_NOTIFICATIONS)
+                return
+            }
+        }
+        requestScreenCapture()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == REQ_NOTIFICATIONS) {
+            requestScreenCapture()
+        }
+    }
+
+    private fun requestScreenCapture() {
+        val manager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        startActivityForResult(manager.createScreenCaptureIntent(), REQ_MEDIA_PROJECTION)
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQ_MEDIA_PROJECTION && resultCode == Activity.RESULT_OK && data != null) {
+            val serviceIntent = Intent(this, ScreenCaptureService::class.java)
+                .putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, resultCode)
+                .putExtra(ScreenCaptureService.EXTRA_DATA, data)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+        }
     }
 
     private fun refreshStatus() {
