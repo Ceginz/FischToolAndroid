@@ -18,6 +18,13 @@
         android:id="@+id/btnOpenAccessibility"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="Activar servicio de accesibilidad" />
+        android:text="Activar servicio de accesibilidad"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/btnStartDetection"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Iniciar detección (Fase 2)" />
 
 </LinearLayout>
