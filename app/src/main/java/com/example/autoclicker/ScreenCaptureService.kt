@@ -29,6 +29,7 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_DATA = "data"
         private const val START_DELAY_MS = 5000L
+        private const val CAST_HOLD_MS = 2000L
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -44,7 +45,7 @@ class ScreenCaptureService : Service() {
     private var lastProcessTime = 0L
     private var lastCastTime = 0L
     private val minIntervalMs = 400L
-    private val castCooldownMs = 4000L
+    private val castCooldownMs = 5000L
 
     private val projectionCallback = object : MediaProjection.Callback() {
         override fun onStop() { stopSelf() }
@@ -80,8 +81,6 @@ class ScreenCaptureService : Service() {
 
         mainHandler.post { OverlayManager.show(applicationContext) { stopSelf() } }
 
-        // esperar a que el usuario cambie a Roblox y la pantalla gire de verdad
-        // antes de preguntar el tamaño y empezar a capturar
         mainHandler.postDelayed({
             val metrics = resources.displayMetrics
             screenWidth = metrics.widthPixels
@@ -135,31 +134,41 @@ class ScreenCaptureService : Service() {
             service.release()
             val (sx, sy) = ScreenDetector.shakeButtonPoint(w, h)
             service.performTap(sx, sy)
-            updateNotification("SHAKE en ($sx,$sy) [captura ${w}x${h}]")
+            updateNotification("SHAKE en ($sx,$sy)")
             return
         }
 
         val state = ScreenDetector.analyzeReelBar(bitmap)
         val fillX = state.barFillX
         val lineX = state.lineX
+        val fillTxt = fillX?.let { "%.0f%%".format(it * 100) } ?: "no detectada"
+        val lineTxt = lineX?.let { "%.0f%%".format(it * 100) } ?: "no detectada"
 
-        if (fillX != null && lineX != null) {
-            val (hx, hy) = ScreenDetector.holdPoint(w, h)
-            if (lineX > fillX) {
-                service.startOrContinueHold(hx, hy)
-            } else {
-                service.release()
+        when {
+            fillX != null && lineX != null -> {
+                val (hx, hy) = ScreenDetector.holdPoint(w, h)
+                if (lineX > fillX) {
+                    service.startOrContinueHold(hx, hy)
+                } else {
+                    service.release()
+                }
+                updateNotification("Toque ($hx,$hy) | Barra:$fillTxt Línea:$lineTxt")
             }
-            updateNotification("Toque en ($hx,$hy) | Barra:%.0f%% Línea:%.0f%%".format(fillX * 100, lineX * 100))
-        } else {
-            service.release()
-            if (now - lastCastTime > castCooldownMs) {
-                lastCastTime = now
-                val (cx, cy) = ScreenDetector.castButtonPoint(w, h)
-                service.performTap(cx, cy)
-                updateNotification("Lanzando en ($cx,$cy) [captura ${w}x${h}]")
-            } else {
-                updateNotification("Esperando… [captura ${w}x${h}]")
+            fillX != null || lineX != null -> {
+                // detección parcial: no actuar todavía, solo mostrar para depurar
+                service.release()
+                updateNotification("Parcial → Barra:$fillTxt Línea:$lineTxt")
+            }
+            else -> {
+                service.release()
+                if (now - lastCastTime > castCooldownMs) {
+                    lastCastTime = now
+                    val (cx, cy) = ScreenDetector.castButtonPoint(w, h)
+                    service.performTap(cx, cy, CAST_HOLD_MS)
+                    updateNotification("Lanzando (hold 2s) en ($cx,$cy)")
+                } else {
+                    updateNotification("Esperando… [captura ${w}x${h}]")
+                }
             }
         }
     }
