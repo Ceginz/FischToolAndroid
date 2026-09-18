@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
+import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -19,6 +20,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -60,6 +62,19 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
     }
 
+    private fun getRealScreenSize(): Pair<Int, Int> {
+        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val bounds = wm.currentWindowMetrics.bounds
+            bounds.width() to bounds.height()
+        } else {
+            val point = Point()
+            @Suppress("DEPRECATION")
+            wm.defaultDisplay.getRealSize(point)
+            point.x to point.y
+        }
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val notification = buildNotification("Cambia a Roblox ahora — iniciando en 5s…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -82,10 +97,10 @@ class ScreenCaptureService : Service() {
         mainHandler.post { OverlayManager.show(applicationContext) { stopSelf() } }
 
         mainHandler.postDelayed({
-            val metrics = resources.displayMetrics
-            screenWidth = metrics.widthPixels
-            screenHeight = metrics.heightPixels
-            screenDensity = metrics.densityDpi
+            val (w, h) = getRealScreenSize()
+            screenWidth = w
+            screenHeight = h
+            screenDensity = resources.displayMetrics.densityDpi
             updateNotification("Pantalla detectada: ${screenWidth}x${screenHeight}")
             startCapture()
         }, START_DELAY_MS)
@@ -155,7 +170,6 @@ class ScreenCaptureService : Service() {
                 updateNotification("Toque ($hx,$hy) | Barra:$fillTxt Línea:$lineTxt")
             }
             fillX != null || lineX != null -> {
-                // detección parcial: no actuar todavía, solo mostrar para depurar
                 service.release()
                 updateNotification("Parcial → Barra:$fillTxt Línea:$lineTxt")
             }
