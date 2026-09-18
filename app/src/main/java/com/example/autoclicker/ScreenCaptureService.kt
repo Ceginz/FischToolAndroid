@@ -41,12 +41,12 @@ class ScreenCaptureService : Service() {
     private var screenHeight = 0
     private var screenDensity = 0
     private var lastProcessTime = 0L
+    private var lastCastTime = 0L
     private val minIntervalMs = 400L
+    private val castCooldownMs = 4000L
 
     private val projectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            stopSelf()
-        }
+        override fun onStop() { stopSelf() }
     }
 
     override fun onCreate() {
@@ -59,7 +59,7 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("Iniciando detección…")
+        val notification = buildNotification("Iniciando…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
@@ -83,10 +83,7 @@ class ScreenCaptureService : Service() {
         mediaProjection?.registerCallback(projectionCallback, handler)
 
         startCapture()
-
-        mainHandler.post {
-            OverlayManager.show(applicationContext) { stopSelf() }
-        }
+        mainHandler.post { OverlayManager.show(applicationContext) { stopSelf() } }
 
         return START_STICKY
     }
@@ -102,10 +99,9 @@ class ScreenCaptureService : Service() {
         )
 
         imageReader?.setOnImageAvailableListener({ reader ->
-            val image = reader.acquireLatestImage()
-            if (image == null) return@setOnImageAvailableListener
-
+            val image = reader.acquireLatestImage() ?: return@setOnImageAvailableListener
             val now = System.currentTimeMillis()
+
             if (OverlayManager.isPaused || now - lastProcessTime < minIntervalMs) {
                 image.close()
                 return@setOnImageAvailableListener
@@ -114,10 +110,7 @@ class ScreenCaptureService : Service() {
 
             try {
                 val bitmap = imageToBitmap(image)
-                val state = ScreenDetector.analyzeReelBar(bitmap)
-                val fillTxt = state.barFillX?.let { "%.0f%%".format(it * 100) } ?: "—"
-                val lineTxt = state.lineX?.let { "%.0f%%".format(it * 100) } ?: "—"
-                updateNotification("Barra: $fillTxt | Línea: $lineTxt")
+                handleFrame(bitmap, now)
                 bitmap.recycle()
             } catch (e: Exception) {
                 // no tumbar el servicio si un frame falla al analizarse
@@ -125,6 +118,44 @@ class ScreenCaptureService : Service() {
                 image.close()
             }
         }, handler)
+    }
+
+    private fun handleFrame(bitmap: Bitmap, now: Long) {
+        val service = ClickAccessibilityService.instance ?: return
+        val w = bitmap.width
+        val h = bitmap.height
+
+        if (ScreenDetector.isShakeButtonVisible(bitmap)) {
+            service.release()
+            val (sx, sy) = ScreenDetector.shakeButtonPoint(w, h)
+            service.performTap(sx, sy)
+            updateNotification("SHAKE detectado — toqué")
+            return
+        }
+
+        val state = ScreenDetector.analyzeReelBar(bitmap)
+        val fillX = state.barFillX
+        val lineX = state.lineX
+
+        if (fillX != null && lineX != null) {
+            val (hx, hy) = ScreenDetector.holdPoint(w, h)
+            if (lineX > fillX) {
+                service.startOrContinueHold(hx, hy)
+            } else {
+                service.release()
+            }
+            updateNotification("Barra: %.0f%% | Línea: %.0f%%".format(fillX * 100, lineX * 100))
+        } else {
+            service.release()
+            if (now - lastCastTime > castCooldownMs) {
+                lastCastTime = now
+                val (cx, cy) = ScreenDetector.castButtonPoint(w, h)
+                service.performTap(cx, cy)
+                updateNotification("Lanzando caña…")
+            } else {
+                updateNotification("Esperando…")
+            }
+        }
     }
 
     private fun imageToBitmap(image: Image): Bitmap {
@@ -135,9 +166,7 @@ class ScreenCaptureService : Service() {
         val rowPadding = rowStride - pixelStride * image.width
 
         val bitmap = Bitmap.createBitmap(
-            image.width + rowPadding / pixelStride,
-            image.height,
-            Bitmap.Config.ARGB_8888
+            image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888
         )
         bitmap.copyPixelsFromBuffer(buffer)
 
