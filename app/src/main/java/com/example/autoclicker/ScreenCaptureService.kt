@@ -8,7 +8,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
-import android.graphics.Point
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -20,7 +19,6 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
-import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 
 class ScreenCaptureService : Service() {
@@ -30,6 +28,7 @@ class ScreenCaptureService : Service() {
         const val NOTIF_ID = 1001
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_DATA = "data"
+        private const val START_DELAY_MS = 5000L
     }
 
     private var mediaProjection: MediaProjection? = null
@@ -60,21 +59,8 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
     }
 
-    private fun getRealScreenSize(): Pair<Int, Int> {
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            val bounds = wm.currentWindowMetrics.bounds
-            bounds.width() to bounds.height()
-        } else {
-            val point = Point()
-            @Suppress("DEPRECATION")
-            wm.defaultDisplay.getRealSize(point)
-            point.x to point.y
-        }
-    }
-
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val notification = buildNotification("Iniciando…")
+        val notification = buildNotification("Cambia a Roblox ahora — iniciando en 5s…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
         } else {
@@ -88,18 +74,22 @@ class ScreenCaptureService : Service() {
             return START_NOT_STICKY
         }
 
-        val (w, h) = getRealScreenSize()
-        screenWidth = w
-        screenHeight = h
-        screenDensity = resources.displayMetrics.densityDpi
-        updateNotification("Pantalla detectada: ${screenWidth}x${screenHeight}")
-
         val projectionManager = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         mediaProjection = projectionManager.getMediaProjection(resultCode, data)
         mediaProjection?.registerCallback(projectionCallback, handler)
 
-        startCapture()
         mainHandler.post { OverlayManager.show(applicationContext) { stopSelf() } }
+
+        // esperar a que el usuario cambie a Roblox y la pantalla gire de verdad
+        // antes de preguntar el tamaño y empezar a capturar
+        mainHandler.postDelayed({
+            val metrics = resources.displayMetrics
+            screenWidth = metrics.widthPixels
+            screenHeight = metrics.heightPixels
+            screenDensity = metrics.densityDpi
+            updateNotification("Pantalla detectada: ${screenWidth}x${screenHeight}")
+            startCapture()
+        }, START_DELAY_MS)
 
         return START_STICKY
     }
@@ -145,7 +135,7 @@ class ScreenCaptureService : Service() {
             service.release()
             val (sx, sy) = ScreenDetector.shakeButtonPoint(w, h)
             service.performTap(sx, sy)
-            updateNotification("SHAKE en ($sx,$sy) [pantalla ${w}x${h}]")
+            updateNotification("SHAKE en ($sx,$sy) [captura ${w}x${h}]")
             return
         }
 
@@ -167,9 +157,9 @@ class ScreenCaptureService : Service() {
                 lastCastTime = now
                 val (cx, cy) = ScreenDetector.castButtonPoint(w, h)
                 service.performTap(cx, cy)
-                updateNotification("Lanzando en ($cx,$cy) [pantalla ${w}x${h}]")
+                updateNotification("Lanzando en ($cx,$cy) [captura ${w}x${h}]")
             } else {
-                updateNotification("Esperando… [pantalla ${w}x${h}]")
+                updateNotification("Esperando… [captura ${w}x${h}]")
             }
         }
     }
