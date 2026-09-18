@@ -2,15 +2,6 @@ package com.example.autoclicker
 
 import android.graphics.Bitmap
 
-/**
- * Analiza un Bitmap de la pantalla capturada y ubica los elementos
- * del minijuego de pesca. Las regiones están en % del ancho/alto
- * para funcionar sin importar la resolución de captura.
- *
- * Calibrado con capturas 2400x1080 usando la caña que vas a usar.
- * Si cambias de caña y los colores del minijuego cambian, hay que
- * reajustar isBright()/isNearBlack() o las regiones.
- */
 object ScreenDetector {
 
     private const val BAR_LEFT = 0.313f
@@ -22,15 +13,58 @@ object ScreenDetector {
     private const val LINE_TOP = 0.755f
     private const val LINE_BOTTOM = 0.801f
 
-    data class ReelState(
-        val barFillX: Float?,
-        val lineX: Float?
-    )
+    private const val CAST_X = 0.832f
+    private const val CAST_Y = 0.675f
+
+    private const val SHAKE_CX = 0.223f
+    private const val SHAKE_CY = 0.498f
+    private const val SHAKE_RADIUS = 0.045f
+
+    data class ReelState(val barFillX: Float?, val lineX: Float?)
 
     fun analyzeReelBar(bitmap: Bitmap): ReelState {
         val w = bitmap.width
         val h = bitmap.height
         return ReelState(findFillEdge(bitmap, w, h), findLineX(bitmap, w, h))
+    }
+
+    fun holdPoint(w: Int, h: Int): Pair<Int, Int> =
+        ((BAR_LEFT + BAR_RIGHT) / 2f * w).toInt() to (BAR_MID_Y * h).toInt()
+
+    fun castButtonPoint(w: Int, h: Int): Pair<Int, Int> =
+        (CAST_X * w).toInt() to (CAST_Y * h).toInt()
+
+    fun shakeButtonPoint(w: Int, h: Int): Pair<Int, Int> =
+        (SHAKE_CX * w).toInt() to (SHAKE_CY * h).toInt()
+
+    fun isShakeButtonVisible(bitmap: Bitmap): Boolean {
+        val w = bitmap.width
+        val h = bitmap.height
+        val cx = (SHAKE_CX * w).toInt()
+        val cy = (SHAKE_CY * h).toInt()
+        val r = (SHAKE_RADIUS * w).toInt()
+
+        val left = (cx - r).coerceIn(0, w - 1)
+        val top = (cy - r).coerceIn(0, h - 1)
+        val size = (r * 2).coerceAtMost(minOf(w - left, h - top))
+        if (size <= 0) return false
+
+        val pixels = IntArray(size * size)
+        bitmap.getPixels(pixels, 0, size, left, top, size, size)
+
+        var darkCount = 0
+        var brightCount = 0
+        for (px in pixels) {
+            val r8 = (px shr 16) and 0xFF
+            val g8 = (px shr 8) and 0xFF
+            val b8 = px and 0xFF
+            val maxC = maxOf(r8, g8, b8)
+            if (maxC < 45) darkCount++
+            else if (r8 > 170 && g8 > 170 && b8 > 170) brightCount++
+        }
+
+        val total = pixels.size
+        return darkCount > total * 0.5 && brightCount > total * 0.02
     }
 
     private fun isBright(px: Int): Boolean {
